@@ -24,7 +24,6 @@ package chat;
 import java.io.IOException;
 import java.io.PrintWriter;
 import java.util.Date;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -44,6 +43,9 @@ import javax.servlet.http.HttpServlet;
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 
+import com.ea.chat.score.ScorerService;
+import com.ea.chat.score.interfaces.IChatScorer;
+
 @WebServlet("/chat")
 public class TopicChatServlet extends HttpServlet {
 
@@ -58,13 +60,17 @@ public class TopicChatServlet extends HttpServlet {
 
 	// Keep last messages
 	//private List<Message> messageStore = new CopyOnWriteArrayList<>();
+	private List<User> userList = new CopyOnWriteArrayList<>();
 
 	private Map<String, List<Message>> topicToMessageMap = new ConcurrentHashMap<>();
-	private Map<AsyncContext, String> AsyncContextToTopicMap = new ConcurrentHashMap<>();
+	//private Map<AsyncContext, String> AsyncContextToTopicMap = new ConcurrentHashMap<>();
+	
+	IChatScorer scorer = null;
 	
 	public TopicChatServlet(){
 		topicToMessageMap.put("default", new CopyOnWriteArrayList<>());
-		Map<String, AsyncContext> asyncContexts = new ConcurrentHashMap<>();
+		ScorerService ss = new ScorerService();
+		scorer = ss.getScorer();
 	}
 
 	// Thread that waits for new message and then redistribute it
@@ -90,7 +96,7 @@ public class TopicChatServlet extends HttpServlet {
 					messageStore.add(message);
 
 					// Keep only last 100 messages
-					if (messageStore.size() > 100) {
+					if (messageStore.size() > 10) {
 						messageStore.remove(0);
 					}
 					
@@ -99,14 +105,7 @@ public class TopicChatServlet extends HttpServlet {
 					// Sends the message to all the AsyncContext's response
 					for (AsyncContext asyncContext : asyncContexts.values()) {
 						try {
-							
-							if(AsyncContextToTopicMap.get(asyncContext).equals(topic)){
-								sendMessage(asyncContext.getResponse().getWriter(), message);
-							}
-							else{
-								String tmpTopic = AsyncContextToTopicMap.get(asyncContext);
-								System.out.println("async: " + asyncContext + " has not informed, it's topic is: " + tmpTopic );
-							}
+							sendMessage(asyncContext.getResponse().getWriter(), message);
 						} catch (Exception e) {
 							// In case of exception remove context from map
 							asyncContexts.values().remove(asyncContext);
@@ -114,6 +113,7 @@ public class TopicChatServlet extends HttpServlet {
 					}
 				} catch (InterruptedException e) {
 					// Log exception, etc.
+					System.err.println(e.getMessage());
 				}
 			}
 		}
@@ -152,7 +152,6 @@ public class TopicChatServlet extends HttpServlet {
 
 		// Check that it is SSE request
 		if ("text/event-stream".equals(request.getHeader("Accept"))) {
-
 			// This a Tomcat specific - makes request asynchronous
 			request.setAttribute("org.apache.catalina.ASYNC_SUPPORTED", true);
 			
@@ -180,6 +179,7 @@ public class TopicChatServlet extends HttpServlet {
 				long lastId = 0;
 				try {
 					lastId = Long.parseLong(lastMsgId);
+					System.out.println("last id: " + lastId);
 				} catch (NumberFormatException e) {
 					// Do nothing as we have default value
 				}
@@ -187,6 +187,7 @@ public class TopicChatServlet extends HttpServlet {
 					// Send all messages that are not send - e.g. with higher id
 					for (Message message : messageStore) {
 						if (message.getId() > lastId) {
+							System.out.println("send message: " + message.getId());
 							sendMessage(response.getWriter(), message);
 						}
 					}
@@ -199,12 +200,9 @@ public class TopicChatServlet extends HttpServlet {
 					// Do nothing as this just gets the last id
 				}
 				if (lastId > 0) {
-					// Send some ping with the last id. Idea is browser to be informed
-					// which is the last event id. Also tell the browser if connection
-					// fails to reopen it after 1000 milliseconds
 					response.getWriter().println("retry: 1000\n");
-					Message message = new Message(lastId, "reconnecting...", "default", new Date());
-					sendMessage(response.getWriter(), message);
+					Message heartbeat = new Message(lastId, "", "default", new Date());
+					sendMessage(response.getWriter(), heartbeat);
 				}
 			}
 
@@ -242,8 +240,7 @@ public class TopicChatServlet extends HttpServlet {
 
 			// Put context in a map
 			asyncContexts.put(id, ac);
-			System.out.println("bind: " + ac.toString() + " to topic" + topic );
-			AsyncContextToTopicMap.put(ac, topic);
+
 		}
 	}
 
@@ -257,23 +254,30 @@ public class TopicChatServlet extends HttpServlet {
 		// Gets message from request
 		String message = request.getParameter("msg");
 		String topic = request.getHeader("topic");
+		String userName = request.getHeader("user");
+		String loadOldMsg = request.getHeader("load");
 		if(topic == null || topic.trim().isEmpty()){
 			topic = "default";
 		}
-		else{
-			System.out.println("get new topic: " + topic);
-			System.out.println();
+		
+		
+		if(loadOldMsg != null){
+			System.out.println("load old messages.." + topic);
+			List<Message> oldMessage = topicToMessageMap.get(topic);
+			for(Message msg : oldMessage){
+				try {
+					messageQueue.put(msg);
+				} catch (InterruptedException e) {
+					// TODO Auto-generated catch block
+					e.printStackTrace();
+				}
+			}
 		}
-
-		// Do some verification and save message into DB, etc.
-		if ((message != null) && !message.trim().isEmpty()) {
+		else if ((message != null) && !message.trim().isEmpty()) {
 			try {
-//				if (message.equals("#clear")) {
-//					messageQueue.clear();
-//					messageStore.clear();
-//					return;
-//				}
 				Message msg = new Message(counter.incrementAndGet(), message.trim(), topic, new Date());
+				int score = scorer.score(msg.getMessage());
+				System.out.println("score: " + score);
 				// Put message into messageQueue
 				messageQueue.put(msg);
 			} catch (InterruptedException e) {

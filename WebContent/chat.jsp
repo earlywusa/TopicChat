@@ -7,10 +7,40 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no"/>
 <meta name="description" content="Topic Chatting"/>
 <title>Java SSE Chat Example</title>
+<style media="screen" type="text/css">
 
+#container {
+	max-width: 500px;
+	margin: 10px auto;
+}
+
+#chat {
+	width: 100%;
+	height: 200px;
+	border: 1px solid silver;
+	overflow-y: scroll;
+}
+
+#msg {
+	width: 99%;
+	margin-top: 10px;
+}
+
+h1 {
+	text-align: center;
+	font-size: 150%;
+}
+
+.center {
+	text-align: center;
+}
+
+
+</style>
 
 <script type="text/javascript">
-
+var lastMsgId=0
+var messageCount=0;
 function subscribe(){
 	console.log("about to subscribe to url");
 	// Check that browser supports EventSource 
@@ -20,40 +50,46 @@ function subscribe(){
 	
 		// Define what to do when server sent new event
 		source.addEventListener("message", function(e) {
-			console.log("data: " + e.data);
-			var data = JSON.parse(e.data);
-			console.log("id: " + data.id + " text: " + data.msg);
-			var el = document.getElementById("chat"); 
-			el.innerHTML += e.data + "<br/>";
-			el.scrollTop += 50;
+			
+ 			var data = JSON.parse(e.data);
+			console.log(JSON.stringify(data)); 
+			if(data.topic == getTopic() && data.msg != ""){
+				var el = document.getElementById("chat"); 
+				if(lastMsgId < data.id){
+					el.innerHTML += data.msg + "<br/>";
+					el.scrollTop += 50;
+					lastMsgId = data.id;
+					console.log("last id: " + lastMsgId);
+					messageCount ++;
+				}
+			}
 		}, false);
 	} else {
 		alert("Your browser does not support EventSource!");
 	}
-	showMsgForm();
+	
 }
-
+function clearChatHistory(){
+	document.getElementById('chat').innerHTML='';
+	lastMsgId=0;
+}
 function showMsgForm(){
 	console.log("show msg form");
 	var submitForm = document.getElementById('msgForm');
 	submitForm.style.display="block";
 }
 
-// Scroll chat to the bottom if not done and set focus to the msg on load
+function getTopic(){
+	var topic = document.getElementById('topicField');
+	return topic.value;
+}
+
 window.onload = function() {
 	document.getElementById("chat").scrollTop += 50 * 100;
 	document.getElementById("msg").focus();
+	subscribe();
 };
-
-
-// Send message to the server using AJAX call
-function sendMsg(form) {
-
-	if (form.msg.value.trim() == "") {
-		alert("Empty message!");
-	}
-	
-	// Init http object
+function prepareHttp(){
 	var http = false;
 	if (typeof ActiveXObject != "undefined") {
 		try {
@@ -72,6 +108,17 @@ function sendMsg(form) {
 			http = false;
 		}
 	}
+	return http;
+}
+
+function sendMsg(form) {
+
+	if (form.msg.value.trim() == "") {
+		alert("Empty message!");
+	}
+	
+	// Init http object
+	var http = prepareHttp();
 
 	if (!http) {
 		alert("Unable to connect!");
@@ -104,68 +151,40 @@ function sendMsg(form) {
 	return false;
 }
 
+function loadOldMsg(){
+	console.log("chat: " + document.getElementById('chat').innerHTML);
+	var topic = getTopic();
+	// Init http object
+	var http = prepareHttp();
+
+	if (!http) {
+		alert("Unable to connect!");
+		return;
+	}
+	/* var form = document.getElementById("msgForm");
+	 http.onreadystatechange = function () {
+		if (http.readyState == 4 && http.status == 200) {
+			if (typeof http.responseText != "undefined") {
+				var result = http.responseText;
+				form.msg.value = "";
+			}
+		}
+	};  */
+	http.open("POST", "/chat", true);
+	/* http.setRequestHeader("Content-type", "application/x-www-form-urlencoded"); */
+	var topicVal = document.getElementById('topicField').value;
+	http.setRequestHeader('topic', topicVal);
+	var userName = document.getElementById('userName').value;
+	if(userName == '' || userName=="enter your name"){
+		userName = "anonymous";
+	}
+	http.setRequestHeader('user', userName);
+	http.setRequestHeader('load', 'all');
+	clearChatHistory();
+	http.send();
+}
+
 </script>
-
-<style media="screen" type="text/css">
-
-#container {
-	max-width: 500px;
-	margin: 10px auto;
-}
-
-#chat {
-	width: 100%;
-	height: 200px;
-	border: 1px solid silver;
-	overflow-y: scroll;
-}
-
-#msg {
-	width: 99%;
-	margin-top: 10px;
-}
-
-h1 {
-	text-align: center;
-	font-size: 150%;
-}
-
-#desc {
-	max-width: 1020px;
-	margin: 10px auto;
-}
-
-#desc p {
-	text-align: justify;
-	text-indent: 20px;
-}
-
-.center {
-	text-align: center;
-}
-
-#download {
-	margin: 50px auto;
-	text-align: center;
-}
-
-#download A {
-	display: inline-block;
-	margin: 5px 10px;
-	padding: 10px 25px;
-	background: #F1592A;
-	color: white;
-	text-decoration: none;
-	font-size: 20px;
-	border-radius: 5px 5px;
-}
-
-#download A:hover {
-	text-decoration: underline;
-	background: #FF592A;
-}
-
-</style>
 
 </head>
 <body>
@@ -176,7 +195,6 @@ h1 {
 
 <div id="chat">
 <%
-	// Quick and dirty way to print existing messages - better use JSTL
 	@SuppressWarnings("unchecked")
 	List<Message> messages = (List<Message>)request.getAttribute("messages");
 	for(Message msg : messages) { %>
@@ -185,15 +203,16 @@ h1 {
 %>
 </div>
 <label>Topic: </label>
-<input id="topicField" type="text" value="default"><br>
+<input id="topicField" type="text" value="default">
+<button type="button" id="btSetTopic" onclick="loadOldMsg()">Set</button>
+<br>
 <label>Name: </label>
 <input id="userName" type="text" value="enter your name"><br>
-<button id="connect" onclick="subscribe()">Connect</button>
-<form id="msgForm" action="/chat" method="post" onsubmit="return sendMsg(this);" style="display: none;">
+
+<form id="msgForm" action="/chat" method="post" onsubmit="return sendMsg(this);" >
 	<input type="text" name="msg" id="msg" placeholder="Enter message here"/>
 </form>
 
-<p>Enter message in the field above and press Enter to send it.</p>
 
 </div>
 
