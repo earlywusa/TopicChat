@@ -88,19 +88,22 @@ function subscribe(){
 function displayScore(){
 
 	var sortArray = sortScore();
+	addToScoreBoard(sortArray);
+}
+
+function addToScoreBoard(sortArray){
+	var board = document.getElementById('scoreBoard');
+	board.innerHTML='';
 	var length = sortArray.length;
 	if(length > 10){
 		length = 10;
 	}
 	for(var ind = 0; ind < length; ind ++){
 		console.log("name: " + sortArray[ind][0] + " score: " + sortArray[ind][1]);
+		var ranking = ind +1;
+		board.append(ranking + ". " + sortArray[ind][0] + " : " + sortArray[ind][1]);
+		board.innerHTML +="<br>";
 	}
-}
-
-function addToScoreBoard(sortArray){
-	var board = document.getElementById('scoreBoard');
-	board.innerHTML='';
-	
 }
 
 function sortScore(){
@@ -249,7 +252,6 @@ function loadOldMsg(){
 %>
 </div>
 <div id="scoreBoard">
-<p>Ranking:</p>
 </div>
 
 <label>Topic: </label>
