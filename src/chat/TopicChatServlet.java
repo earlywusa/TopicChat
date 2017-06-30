@@ -1,23 +1,3 @@
-/*
- * HowOpenSource.com
- * Copyright (C) 2015 admin@howopensource.com
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
- */
-
-
 package chat;
 
 
@@ -44,34 +24,27 @@ import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 
 import com.ea.chat.score.ScorerService;
+import com.ea.chat.score.exceptions.ServiceUnavailableException;
 import com.ea.chat.score.interfaces.IChatScorer;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 @WebServlet("/chat")
 public class TopicChatServlet extends HttpServlet {
 
 	private AtomicLong counter = new AtomicLong();
 	private boolean running;
-
-	// Keeps all open connections from browsers
 	private Map<String, AsyncContext> asyncContexts = new ConcurrentHashMap<>();
-
-	// Temporary store for messages when arrived
 	private BlockingQueue<Message> messageQueue = new LinkedBlockingQueue<>();
-
-	// Keep last messages
-	//private List<Message> messageStore = new CopyOnWriteArrayList<>();
-	private Map<String, Integer> scoreMap = new ConcurrentHashMap<>();
-
+	private Map<String, List<Score>> scoreMap = new ConcurrentHashMap<>();
 	private Map<String, List<Message>> topicToMessageMap = new ConcurrentHashMap<>();
-	//private Map<AsyncContext, String> AsyncContextToTopicMap = new ConcurrentHashMap<>();
-	
+	private ObjectMapper mapper = new ObjectMapper();
 	IChatScorer scorer = null;
 	
 	public TopicChatServlet(){
 		topicToMessageMap.put("default", new CopyOnWriteArrayList<>());
 		ScorerService ss = new ScorerService();
 		scorer = ss.getScorer();
-		scoreMap.put("heartbeat", -1);
 	}
 
 	// Thread that waits for new message and then redistribute it
@@ -166,8 +139,7 @@ public class TopicChatServlet extends HttpServlet {
 			else{
 				topic = "default";
 			}
-			
-			
+
 			// Set header fields
 			response.setContentType("text/event-stream");
 			response.setHeader("Cache-Control", "no-cache");
@@ -210,8 +182,6 @@ public class TopicChatServlet extends HttpServlet {
 			// Generate some unique identifier used to store context in map
 			final String id = UUID.randomUUID().toString();
 
-			// Start asynchronous context and add listeners to remove it in case of errors
-			
 			final AsyncContext ac = request.startAsync();
 			ac.addListener(new AsyncListener() {
 
@@ -249,7 +219,6 @@ public class TopicChatServlet extends HttpServlet {
 	protected void doPost(HttpServletRequest request, HttpServletResponse response) throws ServletException, IOException {
 		
 		System.out.println("do post: " + request.getHeader("user"));
-		// Sets char encoding - should not be done here, better in filter
 		request.setCharacterEncoding("UTF-8");
 
 		// Gets message from request
@@ -261,11 +230,30 @@ public class TopicChatServlet extends HttpServlet {
 			topic = "default";
 		}
 		
-		
 		if(loadOldMsg != null){
 			System.out.println("load old messages.." + topic);
 			List<Message> oldMessage = topicToMessageMap.get(topic);
-			for(Message msg : oldMessage){
+			if(oldMessage != null){
+				for(Message msg : oldMessage){
+					sendJsonMessage(response.getWriter(), msg);
+				}
+				sendJsonScore(response.getWriter(), scoreMap.get(topic));
+			}else{
+				System.out.println("No message with topic: " + topic);
+			}
+		}
+		else if ((message != null) && !message.trim().isEmpty()) {
+			try {
+				int score = scorer.score(message);
+				System.out.println("new score: " + score + " total: " + calScore(userName, topic, score));
+//				Message msg = new Message(counter.incrementAndGet(), message.trim(), topic, userName, new Date());
+//				// Put message into messageQueue
+//				messageQueue.put(msg);
+			}catch(ServiceUnavailableException se){
+				//se.printStackTrace();
+			}finally{
+				Message msg = new Message(counter.incrementAndGet(), message.trim(), topic, userName, new Date());
+				// Put message into messageQueue
 				try {
 					messageQueue.put(msg);
 				} catch (InterruptedException e) {
@@ -274,29 +262,68 @@ public class TopicChatServlet extends HttpServlet {
 				}
 			}
 		}
-		else if ((message != null) && !message.trim().isEmpty()) {
-			try {
-				int score = scorer.score(message);
-				System.out.println("new score: " + score + " total: " + calScore(userName, score));
-				Message msg = new Message(counter.incrementAndGet(), message.trim(), topic, userName, new Date());
-				// Put message into messageQueue
-				messageQueue.put(msg);
-			} catch (InterruptedException e) {
-				throw new IOException(e);
-			}
-		}
 	}
 	
 
-	private int calScore(String userName, int newScore){
-		if(scoreMap.get(userName) == null){
-			scoreMap.put(userName, newScore);
+	private int calScore(String userName, String topic,  int newScore){
+		if(scoreMap.get(topic) == null){
+			List<Score> list = new CopyOnWriteArrayList<>();
+			scoreMap.put(topic, list);
 		}
-		else{
-			int oldScore = scoreMap.get(userName);
-			scoreMap.put(userName, oldScore + newScore);
+		List<Score> userToScoreList = scoreMap.get(topic);
+		Score tmpScore = null;
+		for(Score s: userToScoreList){
+			
+			if(s.getUser().equals(userName)){
+				int oldScore = s.getScore();
+				tmpScore = s;
+				tmpScore.setScore(oldScore + newScore); 
+				break;
+			}
 		}
-		return scoreMap.get(userName);
+		if(tmpScore == null){
+			tmpScore = new Score(userName, newScore);
+			userToScoreList.add(tmpScore);
+		}
+		System.out.println("topic: " + topic + " score: " + tmpScore);
+		return tmpScore.getScore();
+	}
+	
+	private void sendJsonMessage(PrintWriter writer, Message message){
+		try {
+			String val = mapper.writeValueAsString(message);
+			System.out.println("send to client: " + val);
+			writer.println(val+"|");
+		} catch (JsonProcessingException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}
+		
+	}
+	
+	private void sendJsonScore(PrintWriter writer, List<Score> scores){
+		try {
+			StringBuilder sb = new StringBuilder();
+			for(Score s : scores){
+				String val = mapper.writeValueAsString(s);
+				sb.append(val + "|");
+			}
+			String result = sb.subSequence(0, sb.length()-1).toString();
+			writer.println(result);
+		} catch (JsonProcessingException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}
+	}
+	
+	private int findScore(String topic, String name){
+		List<Score> sList = scoreMap.get(topic);
+		for(Score s : sList){
+			if(s.getUser().equals(name)){
+				return s.getScore();
+			}
+		}
+		return -1;
 	}
 	
 	private void sendMessage(PrintWriter writer, Message message) {
@@ -304,7 +331,7 @@ public class TopicChatServlet extends HttpServlet {
 		writer.println("data: \"id\": "+ message.getId()+",");
 		writer.println("data: \"topic\": \"" + message.getTopic()+"\",");
 		writer.println("data: \"user\": \"" + message.getUser()+"\",");
-		writer.println("data: \"score\": " + scoreMap.get(message.getUser())+",");
+		writer.println("data: \"score\": " + findScore(message.getTopic(), message.getUser())+",");
 		writer.println("data: \"msg\": \"" + message.getMessage()+"\"");
 		writer.println("data: }");
 		writer.println();
