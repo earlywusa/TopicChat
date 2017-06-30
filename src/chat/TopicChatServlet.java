@@ -60,7 +60,7 @@ public class TopicChatServlet extends HttpServlet {
 
 	// Keep last messages
 	//private List<Message> messageStore = new CopyOnWriteArrayList<>();
-	private List<User> userList = new CopyOnWriteArrayList<>();
+	private Map<String, Integer> scoreMap = new ConcurrentHashMap<>();
 
 	private Map<String, List<Message>> topicToMessageMap = new ConcurrentHashMap<>();
 	//private Map<AsyncContext, String> AsyncContextToTopicMap = new ConcurrentHashMap<>();
@@ -71,6 +71,7 @@ public class TopicChatServlet extends HttpServlet {
 		topicToMessageMap.put("default", new CopyOnWriteArrayList<>());
 		ScorerService ss = new ScorerService();
 		scorer = ss.getScorer();
+		scoreMap.put("heartbeat", -1);
 	}
 
 	// Thread that waits for new message and then redistribute it
@@ -201,7 +202,7 @@ public class TopicChatServlet extends HttpServlet {
 				}
 				if (lastId > 0) {
 					response.getWriter().println("retry: 1000\n");
-					Message heartbeat = new Message(lastId, "", "default", new Date());
+					Message heartbeat = new Message(lastId, "", "default", "heartbeat", new Date());
 					sendMessage(response.getWriter(), heartbeat);
 				}
 			}
@@ -275,9 +276,9 @@ public class TopicChatServlet extends HttpServlet {
 		}
 		else if ((message != null) && !message.trim().isEmpty()) {
 			try {
-				Message msg = new Message(counter.incrementAndGet(), message.trim(), topic, new Date());
-				int score = scorer.score(msg.getMessage());
-				System.out.println("score: " + score);
+				int score = scorer.score(message);
+				System.out.println("new score: " + score + " total: " + calScore(userName, score));
+				Message msg = new Message(counter.incrementAndGet(), message.trim(), topic, userName, new Date());
 				// Put message into messageQueue
 				messageQueue.put(msg);
 			} catch (InterruptedException e) {
@@ -285,20 +286,25 @@ public class TopicChatServlet extends HttpServlet {
 			}
 		}
 	}
+	
 
-//	private void sendMessage(PrintWriter writer, Message message) {
-//		writer.print("id: ");
-//		writer.println(message.getId());
-//		writer.print("data: ");
-//		writer.println(message.getMessage());
-//		writer.println();
-//		writer.flush();
-//	}
+	private int calScore(String userName, int newScore){
+		if(scoreMap.get(userName) == null){
+			scoreMap.put(userName, newScore);
+		}
+		else{
+			int oldScore = scoreMap.get(userName);
+			scoreMap.put(userName, oldScore + newScore);
+		}
+		return scoreMap.get(userName);
+	}
 	
 	private void sendMessage(PrintWriter writer, Message message) {
 		writer.println("data: {");
 		writer.println("data: \"id\": "+ message.getId()+",");
 		writer.println("data: \"topic\": \"" + message.getTopic()+"\",");
+		writer.println("data: \"user\": \"" + message.getUser()+"\",");
+		writer.println("data: \"score\": " + scoreMap.get(message.getUser())+",");
 		writer.println("data: \"msg\": \"" + message.getMessage()+"\"");
 		writer.println("data: }");
 		writer.println();

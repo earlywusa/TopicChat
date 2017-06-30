@@ -8,14 +8,16 @@ public class Message {
 	private long id;
 	private String message;
 	private String topic = "default";
+	private String user = "anonymous";
 
 
-	public Message(long id, String message, String topic,  Date time) {
+	public Message(long id, String message, String topic, String user, Date time) {
 		super();
 		this.id = id;
 		this.message = message;
 		this.time = time;
 		this.topic = topic;
+		this.user = user;
 	}
 
 
@@ -34,6 +36,10 @@ public class Message {
 	
 	public String getTopic(){
 		return topic;
+	}
+	
+	public String getUser(){
+		return user;
 	}
 
 }

@@ -5,20 +5,28 @@
 <head>
 <meta http-equiv="Content-Type" content="text/html; charset=UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no"/>
-<meta name="description" content="Topic Chatting"/>
-<title>Java SSE Chat Example</title>
+<meta name="description" content="TOPIC CHAT"/>
+<title>EA Topic Chat</title>
 <style media="screen" type="text/css">
 
 #container {
 	max-width: 500px;
-	margin: 10px auto;
+	margin: 0px auto;
 }
 
 #chat {
-	width: 100%;
+	width: 350px;
 	height: 200px;
 	border: 1px solid silver;
 	overflow-y: scroll;
+	float: left;
+}
+
+#scoreBoard{
+	width:190;
+	height:200px;
+	border: 1px solid silver;
+	margin-left: 360px;
 }
 
 #msg {
@@ -41,6 +49,8 @@ h1 {
 <script type="text/javascript">
 var lastMsgId=0
 var messageCount=0;
+var userScore = {};
+
 function subscribe(){
 	console.log("about to subscribe to url");
 	// Check that browser supports EventSource 
@@ -56,11 +66,17 @@ function subscribe(){
 			if(data.topic == getTopic() && data.msg != ""){
 				var el = document.getElementById("chat"); 
 				if(lastMsgId < data.id){
-					el.innerHTML += data.msg + "<br/>";
+					el.innerHTML += data.topic + ": " +data.msg + "<br/>";
 					el.scrollTop += 50;
 					lastMsgId = data.id;
 					console.log("last id: " + lastMsgId);
 					messageCount ++;
+					var userName = data.user;
+					var score = data.score;
+					if(userName != "heartbeat" && score >= 0){
+						userScore[userName] = score;
+						displayScore();
+					}
 				}
 			}
 		}, false);
@@ -69,6 +85,36 @@ function subscribe(){
 	}
 	
 }
+function displayScore(){
+
+	var sortArray = sortScore();
+	var length = sortArray.length;
+	if(length > 10){
+		length = 10;
+	}
+	for(var ind = 0; ind < length; ind ++){
+		console.log("name: " + sortArray[ind][0] + " score: " + sortArray[ind][1]);
+	}
+}
+
+function addToScoreBoard(sortArray){
+	var board = document.getElementById('scoreBoard');
+	board.innerHTML='';
+	
+}
+
+function sortScore(){
+	var sortArray = [];
+	for(var key in userScore){
+		console.log("user: " + key + " score: " + userScore[key]);
+		sortArray.push([key, userScore[key]]);
+	}
+	sortArray.sort(function(a,b){
+		return b[1] - a[1];
+	});
+	return sortArray;
+}
+
 function clearChatHistory(){
 	document.getElementById('chat').innerHTML='';
 	lastMsgId=0;
@@ -202,6 +248,10 @@ function loadOldMsg(){
 <%	}
 %>
 </div>
+<div id="scoreBoard">
+<p>Ranking:</p>
+</div>
+
 <label>Topic: </label>
 <input id="topicField" type="text" value="default">
 <button type="button" id="btSetTopic" onclick="loadOldMsg()">Set</button>
